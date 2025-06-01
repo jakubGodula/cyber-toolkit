@@ -1,256 +1,124 @@
-mod install;
-mod utils;
-use crate::install::*;
-use crate::utils::*;
-use std::{env, fs};
-use std::io::stdin;
 use std::process::Command;
-use std::str;
+use clap::Parser;
+use std::fs;
+use std::io::Write;
 
-fn detect_package_manager() -> PackageManager {
-    if is_command_available("pacman") {
-        PackageManager::Pacman
-    } else if is_command_available("dnf") {
-        PackageManager::Dnf
-    } else if is_command_available("rpm-ostree") {
-        PackageManager::OSTree
-    }
-    else {
-        PackageManager::None
-    }
+const BASE_RAW_URL: &str = "https://raw.githubusercontent.com/jakubGodula/cyber-toolkit/main/roles/";
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// Names of the tool list files (e.g., blue-teamer.txt, red-teamer.txt)
+    #[clap(required = true, num_args = 1..)]
+    tool_files: Vec<String>,
 }
 
-fn is_command_available(cmd: &str) -> bool {
-    which::which(cmd).is_ok()
-}
+fn write_roles_to_config(tool_files: &[String]) -> Result<(), std::io::Error> {
+    if let Some(home_dir) = dirs::home_dir() {
+        let config_dir = home_dir.join(".roles");
+        fs::create_dir_all(&config_dir)?;
+        let config_file_path = config_dir.join("roles.cnf");
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let manager = detect_package_manager();
-
-    println!("Detected package manager: {:?}", manager);
-
-    if args.len() < 2 {
-        match print_banner() {
-            Ok(_) => {}
-            Err(error) => {
-                eprintln!("Error: {}", error);
-            }
+        let mut file = fs::File::create(config_file_path)?;
+        for tool_file_name in tool_files {
+            writeln!(file, "{}", tool_file_name)?;
         }
-        get_help();
-        return;
-    }
-
-    let _ = print_banner();
-    let rolepkg = vec![
-        String::from("role-blueteamer"),
-        String::from("role-bountyhunter"),
-        String::from("role-cracker"),
-        String::from("role-dos"),
-        String::from("role-forensic"),
-        String::from("role-malware"),
-        String::from("role-mobile"),
-        String::from("role-network"),
-        String::from("role-osint"),
-        String::from("role-redteamer"),
-        String::from("role-student"),
-        String::from("role-webpentester"),
-    ];
-
-    uninstall(manager, rolepkg);
-
-    match args[1].as_str() {
-        "blue" => {
-            if let Err(code) = install(
-                manager,
-                vec![
-                    "role-blueteamer",
-                    "clamav",
-                    "cryptsetup",
-                    "ddrescue",
-                    "exploitdb",
-                    "ext3grep",
-                    "extundelete",
-                    "foremost",
-                    "fwbuilder",
-                    "ghidra",
-                    "impacket",
-                    "netsniff-ng",
-                    "rkhunter",
-                    "sleuthkit",
-                    "unhide",
-                    "wireshark-qt",
-                    "zaproxy",
-                ],
-            ) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "bugbounty" => {
-            if let Err(code) = install(
-                PackageManager::Pacman,
-                vec![
-                    "role-bountyhunter",
-                    "exploitdb",
-                    "findomain",
-                    "gitleaks",
-                    "hydra",
-                    "masscan",
-                    "metasploit",
-                    "nikto",
-                    "nmap",
-                    "rustscan",
-                    "sqlmap",
-                    "wpscan",
-                ],
-            ) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-            if let Err(code) = getpayloads() {
-                eprintln!("Failed to get payloads with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "cracker" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-cracker"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-            if let Err(code) = getpayloads() {
-                eprintln!("Failed to get payloads with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "dos" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-dos"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "forensic" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-forensic"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "malware" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-malware"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "mobile" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-mobile"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "network" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-network"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "osint" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-osint"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "red" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-redteamer"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-            if let Err(code) = getpayloads() {
-                eprintln!("Failed to get payloads with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "student" => {
-            if let Err(code) = install(
-                PackageManager::Pacman,
-                vec![
-                    "role-student",
-                    "aircrack-ng",
-                    "binwalk",
-                    "exploitdb",
-                    "ghidra",
-                    "hashcat",
-                    "hydra",
-                    "john",
-                    "kismet",
-                    "medusa",
-                    "metasploit",
-                    "mitmproxy",
-                    "nasm",
-                    "nikto",
-                    "nmap",
-                    "proxychains-ng",
-                    "radare2",
-                    "reaver",
-                    "sqlmap",
-                    "wireshark-qt",
-                    "wifite",
-                    "wpscan",
-                ],
-            ) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-            if let Err(code) = getpayloads() {
-                eprintln!("Failed to get payloads with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        "web" => {
-            if let Err(code) = install(PackageManager::Pacman, vec!["role-webpentester"]) {
-                eprintln!("Installation failed with exit code: {}", code);
-                std::process::exit(code);
-            }
-            if let Err(code) = getpayloads() {
-                eprintln!("Failed to get payloads with exit code: {}", code);
-                std::process::exit(code);
-            }
-        }
-        _ => {
-            println!("Invalid command: {}", args[1]);
-            get_help();
-        }
-    }
-
-    let mut current_user = String::new();
-    let output = Command::new("who")
-        .output()
-        .expect("Failed to execute 'who' command");
-
-    if output.status.success() {
-        let stdout = str::from_utf8(&output.stdout).expect("Failed to parse UTF-8");
-        let username = stdout.split_whitespace().next().unwrap_or("");
-        current_user = username.to_string();
+        println!("Successfully wrote roles to ~/.roles/roles.cnf");
     } else {
-        eprintln!("Error: 'who' command failed");
+        eprintln!("Error: Could not determine home directory. Roles not saved to config.");
+        // Optionally, return an error here if this is critical
+        // return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found"));
     }
-    let setting_file = format!("/home/{}/.config/athena-welcome/settings.conf", current_user);
+    Ok(())
+}
 
-    if fs::metadata(setting_file.clone()).is_ok() {
-        exec_eval(
-            exec(
-                "sed",
-                vec![
-                    String::from("-in"),
-                    format!("s/^role=.*/role={}/g", args[1].as_str()),
-                    setting_file,
-                ],
-            ),
-            "Delete commented lines from file",
-        );
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
+    // Write the provided tool file names to the config file
+    if let Err(e) = write_roles_to_config(&args.tool_files) {
+        eprintln!("Warning: Could not write roles to config file: {}", e);
+        // Continue execution even if config writing fails
     }
-    println!("All done. Your role has been set!");
 
-    let mut input = String::new();
-    println!("Press Enter to continue");
-    stdin().read_line(&mut input).expect("Failed to read input");
+    let mut all_tools: Vec<String> = Vec::new();
+
+    for tool_file_name in args.tool_files {
+        let full_tool_list_url = format!("{}{}", BASE_RAW_URL, tool_file_name);
+        println!("Fetching tool list from {}...", full_tool_list_url);
+
+        let response = reqwest::get(&full_tool_list_url).await;
+        
+        match response {
+            Ok(res) => {
+                if !res.status().is_success() {
+                    eprintln!("Failed to fetch tool list from {}: HTTP Status {}", full_tool_list_url, res.status());
+                    continue; // Skip to the next file
+                }
+
+                let tool_list_text = res.text().await?;
+                let tools_from_current_file: Vec<String> = tool_list_text
+                    .lines()
+                    .map(|line| line.trim().trim_end_matches(',').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                
+                if tools_from_current_file.is_empty() {
+                    println!("No tools found in {}.", full_tool_list_url);
+                } else {
+                    println!("Found tools in {}: {:?}", full_tool_list_url, tools_from_current_file);
+                    all_tools.extend(tools_from_current_file);
+                }
+            },
+            Err(e) => {
+                eprintln!("Error fetching tool list from {}: {}", full_tool_list_url, e);
+                continue; // Skip to the next file
+            }
+        }
+    }
+
+    if all_tools.is_empty() {
+        println!("No tools found in any of the provided files.");
+        return Ok(());
+    }
+
+    all_tools.sort_unstable();
+    all_tools.dedup();
+
+    println!("\nTotal unique tools to install: {:?}", all_tools);
+    println!("Attempting to install tools using pacman...");
+
+    let tools_string = all_tools.join(" ");
+    let command_str = format!("sudo pacman -S --noconfirm {}", tools_string);
+    println!("Executing: {}", command_str);
+
+    let status = Command::new("pkexec")
+        .arg("sh")
+        .arg("-c")
+        .arg(&command_str)
+        .status();
+
+    match status {
+        Ok(exit_status) => {
+            if exit_status.success() {
+                println!("Successfully installed/updated all tools.");
+            } else {
+                eprintln!("Failed to install/update tools. Exit code: {:?}", exit_status.code());
+                eprintln!("Command was: {}", command_str);
+                eprintln!("Please check for errors above and try installing manually if needed.");
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to execute command: {}", e);
+            eprintln!("Command was: pkexec sh -c \"{}\"", command_str);
+            if e.kind() == std::io::ErrorKind::NotFound {
+                eprintln!("pkexec command not found. Please ensure Polkit is installed and pkexec is in your PATH.");
+            }
+            eprintln!("Please try installing manually if needed.");
+        }
+    }
+
+    println!("\n--- Tool installation process finished ---");
+    Ok(())
 }

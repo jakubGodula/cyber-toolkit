@@ -1,21 +1,21 @@
-aircrack-ng",
-                    "binwalk",
-                    "exploitdb",
-                    "ghidra",
-                    "hashcat",
-                    "hydra",
-                    "john",
-                    "kismet",
-                    "medusa",
-                    "metasploit",
-                    "mitmproxy",
-                    "nasm",
-                    "nikto",
-                    "nmap",
-                    "proxychains-ng",
-                    "radare2",
-                    "reaver",
-                    "sqlmap",
-                    "wireshark-qt",
-                    "wifite",
-                    "wpscan",
+aircrack-ng
+binwalk
+exploitdb
+ghidra
+hashcat
+hydra
+john
+kismet
+medusa
+metasploit
+mitmproxy
+nasm
+nikto
+nmap
+proxychains-ng
+radare2
+reaver
+sqlmap
+wireshark-qt
+wifite
+wpscan
