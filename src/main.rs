@@ -175,7 +175,22 @@ async fn run_pacman_command(operation_flag: &str, tools: &[String]) -> Result<()
         _ => return Err(Box::from(format!("Unsupported pacman operation: {}", operation_flag))),
     };
 
-    let quoted_tools: Vec<String> = tools.iter().map(|tool| shlex::quote(tool).into_owned()).collect();
+    let mut quoted_tools: Vec<String> = Vec::with_capacity(tools.len());
+    for tool in tools {
+        match shlex::try_quote(tool) {
+            Ok(quoted_tool) => quoted_tools.push(quoted_tool.into_owned()),
+            Err(e) => {
+                eprintln!("Warning: Could not quote tool name '{}' due to error: {}. Skipping this tool.", tool, e);
+                // Optionally, we could add it to a list of skipped tools and report at the end.
+            }
+        }
+    }
+
+    if quoted_tools.is_empty() {
+        println!("No tools could be safely quoted for pacman {} operation.", operation_flag);
+        return Ok(());
+    }
+
     let tools_string = quoted_tools.join(" ");
     // Using --confirm --overwrite as per user's edit
     let command_str = format!("sudo pacman {} --confirm --overwrite {}", pacman_op_arg, tools_string);
