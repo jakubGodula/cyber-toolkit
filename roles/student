@@ -14,7 +14,6 @@ nikto
 nmap
 proxychains-ng
 radare2
-reaver
 sqlmap
 wireshark-qt
 wifite
