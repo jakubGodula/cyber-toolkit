@@ -5,33 +5,80 @@ use std::process::Command;
 use std::fs;
 use std::io::{self, Write, BufReader, BufRead};
 use shlex; // For safely quoting arguments for shell commands
-use serde::Deserialize; // Added for GitHub API response parsing
+use serde::{Deserialize, Serialize}; // Added for GitHub API response parsing
 use std::env; // For accessing current executable path and arguments
 use std::path::Path;
 
-// Consider if these constants are truly lib-level or should be passed from main.
-// REPO_URL seems like a good candidate for the library.
-pub const REPO_URL: &str = "https://raw.githubusercontent.com/jakubGodula/cyber-toolkit/main/roles/";
 
-#[derive(Deserialize, Debug)] // Made public if it needs to be part of public API, otherwise keep private
+/// Base URL for the GitHub repository containing role definitions.
+pub const REPO_URL: &str = "https://raw.githubusercontent.com/jakubGodula/cyber-toolkit/refs/heads/main/roles/";
+pub const ROLE_NAMES_URL: &str = "https://raw.githubusercontent.com/jakubGodula/cyber-toolkit/refs/heads/main/roles/role_names";
+
+/// Program ID for the tools registry
+const TOOLS_REGISTRY_PROGRAM_ID: &str = "YOUR_PROGRAM_ID"; // Replace with actual program ID
+
+/// Represents a content item from the GitHub API response.
+#[derive(Deserialize, Debug)]
 pub struct GitHubContentItem {
+    /// The name of the file or directory
     name: String,
+    /// The type of the item (e.g., "file" or "dir")
     #[serde(rename = "type")]
     item_type: String,
 }
 
-pub async fn display_available_roles() -> Result<(), Box<dyn std::error::Error>> {
-    let role_names_url = format!("{}role_names", REPO_URL);
-    let response = reqwest::get(&role_names_url).await?;
+/// Base URL for the GitHub API to fetch repository contents
+/// Fetches the list of available roles from the GitHub repository.
+/// 
+/// This function uses the GitHub API to fetch the contents of the roles directory
+/// and returns a list of role names.
+/// 
+/// # Returns
+/// 
+/// * `Ok(Vec<String>)` - A vector of role names if successful
+/// * `Err(Box<dyn Error>)` - If there was an error fetching or processing the roles
+pub async fn fetch_available_roles(repository_url: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    println!("Fetching available roles from: {}role_names", repository_url);
+    let response = reqwest::get(format!("{}role_names",repository_url)).await?;
     if !response.status().is_success() {
-        eprintln!("Error: Could not fetch the list of defined roles from {}. HTTP Status: {}", role_names_url, response.status());
-        return Ok(());
+        println!("Failed to fetch roles from GitHub API: {}", repository_url);
+        return Err(Box::from(format!("Failed to fetch roles from GitHub API: {}{}", response.status(), repository_url)));
     }
-    let role_names_list_content = response.text().await?;
-    print!("{}", role_names_list_content);
+    println!("Response: {:?}", response);
+    let content_items: Vec<GitHubContentItem> = response.json().await?;
+    let role_names: Vec<String> = content_items
+        .into_iter()
+        .filter(|item| item.item_type == "file" && item.name != "role_names")
+        .map(|item| item.name)
+        .collect();
+
+    Ok(role_names)
+}
+
+/// Displays a list of all available roles from the repository.
+/// 
+/// This function fetches the `role_names` file from the repository and prints its contents.
+/// The file should contain a list of role names, one per line.
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the roles were successfully displayed
+/// * `Err(Box<dyn Error>)` - If there was an error fetching or processing the roles
+pub async fn display_available_roles() -> Result<(), Box<dyn std::error::Error>> {
+    let role_names = fetch_available_roles(REPO_URL).await?;
+    println!("Available roles: {:?}", role_names);
     Ok(())
 }
 
+/// Displays all available roles and their associated tools from the repository.
+/// 
+/// This function fetches the `role_names` file and then retrieves the tool list
+/// for each role. For each role, it prints the role name followed by its tools.
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the roles and tools were successfully displayed
+/// * `Err(Box<dyn Error>)` - If there was an error fetching or processing the roles/tools
 pub async fn display_available_roles_and_tools() -> Result<(), Box<dyn std::error::Error>> {
     let role_names_url = format!("{}role_names", REPO_URL);
     let response = reqwest::get(&role_names_url).await?;
@@ -73,6 +120,15 @@ pub async fn display_available_roles_and_tools() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// Reads the list of currently configured roles from the configuration file.
+/// 
+/// The configuration file is located at `~/.roles/roles.cnf`. Each line in the file
+/// represents a role name. Empty lines are ignored.
+/// 
+/// # Returns
+/// 
+/// * `Ok(Vec<String>)` - A vector of role names read from the configuration file
+/// * `Err(io::Error)` - If there was an error reading the file or if the home directory couldn't be found
 pub fn read_roles_from_config_file() -> Result<Vec<String>, io::Error> {
     let config_file_path = dirs::home_dir()
         .map(|home_dir| home_dir.join(".roles").join("roles.cnf"))
@@ -92,6 +148,19 @@ pub fn read_roles_from_config_file() -> Result<Vec<String>, io::Error> {
         .collect()
 }
 
+/// Writes the list of roles to the configuration file.
+/// 
+/// The configuration file is located at `~/.roles/roles.cnf`. Each role name
+/// is written on a new line. The directory is created if it doesn't exist.
+/// 
+/// # Arguments
+/// 
+/// * `roles` - A slice of role names to write to the configuration file
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the roles were successfully written to the file
+/// * `Err(io::Error)` - If there was an error writing to the file or if the home directory couldn't be found
 pub fn write_roles_to_config_file(roles: &[String]) -> Result<(), io::Error> {
     let config_file_path = dirs::home_dir()
         .map(|home_dir| home_dir.join(".roles").join("roles.cnf"))
@@ -108,6 +177,22 @@ pub fn write_roles_to_config_file(roles: &[String]) -> Result<(), io::Error> {
     Ok(())
 }
 
+/// Fetches the list of tools for the specified role files.
+/// 
+/// For each role file, this function:
+/// 1. Constructs the full URL to the role file in the repository
+/// 2. Fetches the contents of the file
+/// 3. Parses the contents to extract tool names
+/// 4. Handles any formatting issues (commas, quotes, etc.)
+/// 
+/// # Arguments
+/// 
+/// * `role_files` - A slice of role file names to fetch tools for
+/// 
+/// # Returns
+/// 
+/// * `Ok(Vec<String>)` - A vector of unique tool names from all specified roles
+/// * `Err(Box<dyn Error>)` - If there was an error fetching or processing any of the role files
 pub async fn fetch_tools_for_role_files(role_files: &[String]) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut collected_tools = Vec::new();
     if role_files.is_empty() {
@@ -166,6 +251,21 @@ pub async fn fetch_tools_for_role_files(role_files: &[String]) -> Result<Vec<Str
     Ok(collected_tools)
 }
 
+/// Executes a pacman command for the specified tools.
+/// 
+/// This function handles both installation (`Syu`) and removal (`Rcns`) operations.
+/// It attempts to perform the operation in bulk first, and if that fails,
+/// it falls back to processing each tool individually.
+/// 
+/// # Arguments
+/// 
+/// * `operation_flag` - The pacman operation flag ("Syu" for install/update, "Rcns" for remove)
+/// * `tools` - A slice of tool names to operate on
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the operation was successful for all tools
+/// * `Err(Box<dyn Error>)` - If the operation failed for any tool
 pub async fn run_pacman_command(operation_flag: &str, tools: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if tools.is_empty() {
         println!("No tools specified for pacman {} operation.", operation_flag);
@@ -173,7 +273,7 @@ pub async fn run_pacman_command(operation_flag: &str, tools: &[String]) -> Resul
     }
     let pacman_op_arg = match operation_flag {
         "Syu" => "-Syu --noconfirm --needed",
-        "Rcns" => "-Runs --noconfirm", 
+        "Rcns" => "-Runs --noconfirm",
         _ => return Err(Box::from(format!("Unsupported pacman operation: {}", operation_flag))),
     };
 
@@ -182,18 +282,32 @@ pub async fn run_pacman_command(operation_flag: &str, tools: &[String]) -> Resul
         match shlex::try_quote(tool) {
             Ok(quoted_tool) => quoted_tools_bulk.push(quoted_tool.into_owned()),
             Err(e) => {
-                eprintln!("Warning: Could not quote tool name '{}' for bulk operation due to error: {}. It might be skipped or fail if processed individually.", tool, e);
+                // If quoting fails for a tool, we cannot safely include it in the bulk command.
+                // This is an error state for the bulk operation.
+                return Err(Box::from(format!("Failed to quote tool name '{}' for bulk operation: {}", tool, e)));
             }
         }
     }
 
-    if quoted_tools_bulk.is_empty() && !tools.is_empty() {
-        eprintln!("No tools could be safely quoted for pacman {} bulk operation. Attempting individual operations.", operation_flag);
-    } else if !quoted_tools_bulk.is_empty() {
+    if quoted_tools_bulk.is_empty() {
+        // This should ideally not happen if 'tools' was not empty and quoting didn't error,
+        // but as a safeguard:
+         if !tools.is_empty() {
+             return Err(Box::from("No tools could be safely quoted for bulk operation."));
+         } else {
+             // Should be caught by the initial check, but harmless.
+             return Ok(()); 
+         }
+    } else { // !quoted_tools_bulk.is_empty()
         let tools_string_bulk = quoted_tools_bulk.join(" ");
-        let command_str_bulk = format!("pacman {} {}", pacman_op_arg, tools_string_bulk); // Assuming root from main
-        
+        // Using `sudo` here assumes we are *not* self-elevating in main.rs.
+        // If main.rs *does* self-elevate using `sudo`, then remove `sudo` from the command_str.
+        // Based on the commented-out elevate_to_root block in main, let's assume we *do* need sudo here.
+        // UPDATE: The self-elevation logic was added back later using `sudo`. So, remove `sudo` from the command string here.
+        let command_str_bulk = format!("pacman {} {}", pacman_op_arg, tools_string_bulk);
+
         println!("Attempting bulk pacman {} operation for: {:?}", operation_flag, tools);
+        // Execute the command directly, relying on self-elevation in main if necessary.
         let status_bulk = Command::new("sh")
             .arg("-c")
             .arg(&command_str_bulk)
@@ -204,51 +318,67 @@ pub async fn run_pacman_command(operation_flag: &str, tools: &[String]) -> Resul
             return Ok(());
         } else {
             eprintln!("Bulk pacman {} operation failed (Exit code: {:?}). Command: {}. Attempting individual operations for each tool.", operation_flag, status_bulk.code(), command_str_bulk);
-        }
-    }
-    
-    println!("Processing tools individually...");
-    let mut all_individual_successful = true;
-    let mut successful_individual_ops = 0;
-    let mut failed_individual_ops = Vec::new();
-
-    for tool_name in tools {
-        match shlex::try_quote(tool_name) {
-            Ok(quoted_tool_single) => {
-                let command_str_single = format!("pacman {} {}", pacman_op_arg, quoted_tool_single); // Assuming root
-                let status_single = Command::new("sh")
-                    .arg("-c")
-                    .arg(&command_str_single)
-                    .status()?;
-
-                if status_single.success() {
-                    println!("Pacman {} operation successful for tool: {}", operation_flag, tool_name);
-                    successful_individual_ops += 1;
-                } else {
-                    failed_individual_ops.push(tool_name.clone());
-                    all_individual_successful = false;
+            println!("Processing tools individually...");
+            let mut all_individual_successful = true;
+            let mut successful_individual_ops = 0;
+            let mut failed_individual_ops = Vec::new();
+        
+            for tool_name in tools {
+                match shlex::try_quote(tool_name) {
+                    Ok(quoted_tool_single) => {
+                        let command_str_single = format!("pacman {} {}", pacman_op_arg, quoted_tool_single); // Assuming root
+                        let status_single = Command::new("sh")
+                            .arg("-c")
+                            .arg(&command_str_single)
+                            .status()?;
+        
+                        if status_single.success() {
+                            println!("Pacman {} operation successful for tool: {}", operation_flag, tool_name);
+                            successful_individual_ops += 1;
+                        } else {
+                            failed_individual_ops.push(tool_name.clone());
+                            all_individual_successful = false;
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Error: Could not quote tool name '{}' for individual pacman operation: {}. Skipping this tool.", tool_name, e);
+                        all_individual_successful = false;
+                    }
                 }
-            },
-            Err(e) => {
-                eprintln!("Error: Could not quote tool name '{}' for individual pacman operation: {}. Skipping this tool.", tool_name, e);
-                all_individual_successful = false;
             }
+        
+            if all_individual_successful {
+                println!("All individual pacman {} operations completed successfully.", operation_flag);
+                Ok(())
+            } else {
+                if successful_individual_ops > 0 {
+                     eprintln!("Some individual pacman {} operations failed: \n{:?}, but other {} succeeded.", operation_flag, failed_individual_ops, successful_individual_ops);
+                } else {
+                     eprintln!("All individual pacman {} operations failed.", operation_flag);
+                }
+                Err(Box::from(format!("One or more pacman {} operations failed during individual processing after bulk attempt.", operation_flag)))
+            }   
         }
-    }
-
-    if all_individual_successful {
-        println!("All individual pacman {} operations completed successfully.", operation_flag);
-        Ok(())
-    } else {
-        if successful_individual_ops > 0 {
-             eprintln!("Some individual pacman {} operations failed: \n{:?}, but other {} succeeded.", operation_flag, failed_individual_ops, successful_individual_ops);
-        } else {
-             eprintln!("All individual pacman {} operations failed.", operation_flag);
-        }
-        Err(Box::from(format!("One or more pacman {} operations failed during individual processing after bulk attempt.", operation_flag)))
     }
 }
 
+/// Handles the add command for specified roles.
+/// 
+/// This function:
+/// 1. Reads the current configuration
+/// 2. Adds the new roles to the configuration
+/// 3. Fetches all tools for the configured roles
+/// 4. Installs/updates the tools using pacman
+/// 5. Updates the configuration file
+/// 
+/// # Arguments
+/// 
+/// * `roles_to_add_from_args` - A slice of role names to add
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the roles were successfully added and their tools installed
+/// * `Err(Box<dyn Error>)` - If there was an error during any step of the process
 pub async fn handle_add_command(roles_to_add_from_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut current_roles = read_roles_from_config_file().unwrap_or_else(|e| {
         eprintln!("Warning: Could not read existing roles config: {}. Starting with an empty list.", e);
@@ -278,6 +408,22 @@ pub async fn handle_add_command(roles_to_add_from_args: &[String]) -> Result<(),
     Ok(())
 }
 
+/// Handles the update command to set the system to a specific set of roles.
+/// 
+/// This function:
+/// 1. Determines which roles need to be added and which need to be removed
+/// 2. Adds any new roles and their tools
+/// 3. Removes any roles that are no longer needed
+/// 4. Updates the configuration file
+/// 
+/// # Arguments
+/// 
+/// * `roles_to_set_from_args` - A slice of role names that should be the final configuration
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the system was successfully updated to the specified roles
+/// * `Err(Box<dyn Error>)` - If there was an error during any step of the process
 pub async fn handle_update_command(roles_to_set_from_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     println!("Executing UPDATE command. Target roles to set: {:?}", roles_to_set_from_args);
     // Check if any of the roles_to_set_from_args are not in config
@@ -333,6 +479,23 @@ pub async fn handle_update_command(roles_to_set_from_args: &[String]) -> Result<
     Ok(())
 }
 
+/// Handles the remove command for specified roles.
+/// 
+/// This function:
+/// 1. Reads the current configuration
+/// 2. Determines which roles to keep and which to remove
+/// 3. Calculates which tools are unique to the removed roles
+/// 4. Uninstalls the unique tools using pacman
+/// 5. Updates the configuration file
+/// 
+/// # Arguments
+/// 
+/// * `roles_to_remove_from_args` - A slice of role names to remove
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the roles were successfully removed and their unique tools uninstalled
+/// * `Err(Box<dyn Error>)` - If there was an error during any step of the process
 pub async fn handle_remove_command(roles_to_remove_from_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let configured_roles_before_removal = read_roles_from_config_file().unwrap_or_else(|e| {
         eprintln!("Warning: Could not read existing roles config: {}. Assuming no roles were configured.", e);
@@ -389,6 +552,15 @@ pub async fn handle_remove_command(roles_to_remove_from_args: &[String]) -> Resu
     Ok(())
 }
 
+/// Handles the current command to display the currently configured roles.
+/// 
+/// This function reads the configuration file and prints the list of
+/// currently configured roles.
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the current roles were successfully displayed
+/// * `Err(Box<dyn Error>)` - If there was an error reading the configuration
 pub async fn handle_current_command() -> Result<(), Box<dyn std::error::Error>> {
     let current_roles = read_roles_from_config_file().unwrap_or_else(|e| {
         eprintln!("Warning: Could not read existing roles config: {}. Assuming no roles were configured.", e);
@@ -397,6 +569,16 @@ pub async fn handle_current_command() -> Result<(), Box<dyn std::error::Error>> 
     println!("Current roles: {:?}", current_roles);
     Ok(())
 }
+
+/// Checks if the current user has root privileges.
+/// 
+/// This function executes the `id -u` command and checks if the output is "0",
+/// which indicates root privileges.
+/// 
+/// # Returns
+/// 
+/// * `true` - If the user has root privileges
+/// * `false` - If the user does not have root privileges or if the check failed
 pub fn check_if_user_is_root() -> bool {
     match Command::new("id").arg("-u").output() {
         Ok(output) => match String::from_utf8(output.stdout) {
@@ -407,6 +589,18 @@ pub fn check_if_user_is_root() -> bool {
     }
 }
 
+/// Attempts to elevate the program to root privileges using sudo.
+/// 
+/// This function:
+/// 1. Gets the path to the current executable
+/// 2. Collects the current command-line arguments
+/// 3. Re-executes the program using sudo with the same arguments
+/// 4. Exits the current process
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - If the elevation was successful (though the function never returns)
+/// * `Err(Box<dyn Error>)` - If there was an error during the elevation process
 pub fn elevate_to_root() -> Result<(), Box<dyn std::error::Error>> {
     println!("Root privileges are required. Attempting to re-run with sudo...");
     let current_exe = env::current_exe()?;
@@ -420,3 +614,159 @@ pub fn elevate_to_root() -> Result<(), Box<dyn std::error::Error>> {
 
     std::process::exit(status.code().unwrap_or(if status.success() { 0 } else { 1 }));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use tempfile::tempdir;
+    use mockall::predicate::*;
+    use mockall::mock;
+
+    // Mock for reqwest
+    mock! {
+        HttpClient {}
+        impl HttpClient {
+            fn get(&self, url: &str) -> Result<String, Box<dyn std::error::Error>>;
+        }
+    }
+
+    #[test]
+    fn test_read_roles_from_config_file() {
+        // Create a temporary directory
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join(".roles").join("roles.cnf");
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+
+        // Create test content
+        let test_content = "role1\nrole2\nrole3\n";
+        fs::write(&config_path, test_content).unwrap();
+
+        // Test reading roles
+        let roles = read_roles_from_config_file().unwrap();
+        assert_eq!(roles, vec!["role1", "role2", "role3"]);
+
+        // Test empty file
+        fs::write(&config_path, "").unwrap();
+        let roles = read_roles_from_config_file().unwrap();
+        assert!(roles.is_empty());
+
+        // Test non-existent file
+        fs::remove_file(&config_path).unwrap();
+        let roles = read_roles_from_config_file().unwrap();
+        assert!(roles.is_empty());
+    }
+
+    #[test]
+    fn test_write_roles_to_config_file() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join(".roles").join("roles.cnf");
+        
+        // Test writing roles
+        let roles = vec!["role1".to_string(), "role2".to_string(), "role3".to_string()];
+        write_roles_to_config_file(&roles).unwrap();
+
+        // Verify content
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert_eq!(content, "role1\nrole2\nrole3\n");
+
+        // Test empty roles
+        write_roles_to_config_file(&[]).unwrap();
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.is_empty());
+    }
+
+    #[test]
+    fn test_check_if_user_is_root() {
+        // This is a basic test that just ensures the function doesn't panic
+        let _ = check_if_user_is_root();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tools_for_role_files() {
+        let mock_client = MockHttpClient::new();
+        mock_client.expect_get()
+            .returning(|_| Ok("tool1\ntool2\ntool3\n".to_string()));
+
+        let role_files = vec!["test_role.txt".to_string()];
+        let tools = fetch_tools_for_role_files(&role_files).await.unwrap();
+        assert_eq!(tools, vec!["tool1", "tool2", "tool3"]);
+    }
+
+    #[tokio::test]
+    async fn test_handle_add_command() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join(".roles").join("roles.cnf");
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+
+        // Test adding new roles
+        let roles_to_add = vec!["new_role1".to_string(), "new_role2".to_string()];
+        handle_add_command(&roles_to_add).await.unwrap();
+
+        // Verify roles were added
+        let roles = read_roles_from_config_file().unwrap();
+        assert_eq!(roles, roles_to_add);
+    }
+
+    #[tokio::test]
+    async fn test_handle_remove_command() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join(".roles").join("roles.cnf");
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+
+        // Setup initial roles
+        let initial_roles = vec!["role1".to_string(), "role2".to_string(), "role3".to_string()];
+        write_roles_to_config_file(&initial_roles).unwrap();
+
+        // Test removing a role
+        let roles_to_remove = vec!["role2".to_string()];
+        handle_remove_command(&roles_to_remove).await.unwrap();
+
+        // Verify role was removed
+        let roles = read_roles_from_config_file().unwrap();
+        assert_eq!(roles, vec!["role1", "role3"]);
+    }
+
+    #[tokio::test]
+    async fn test_handle_update_command() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join(".roles").join("roles.cnf");
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+
+        // Setup initial roles
+        let initial_roles = vec!["role1".to_string(), "role2".to_string()];
+        write_roles_to_config_file(&initial_roles).unwrap();
+
+        // Test updating to new roles
+        let new_roles = vec!["role2".to_string(), "role3".to_string()];
+        handle_update_command(&new_roles).await.unwrap();
+
+        // Verify roles were updated
+        let roles = read_roles_from_config_file().unwrap();
+        assert_eq!(roles, new_roles);
+    }
+
+    #[tokio::test]
+    async fn test_display_available_roles() {
+        // This is a basic test that just ensures the function doesn't panic
+        let _ = display_available_roles().await;
+    }
+
+    #[tokio::test]
+    async fn test_display_available_roles_and_tools() {
+        // This is a basic test that just ensures the function doesn't panic
+        let _ = display_available_roles_and_tools().await;
+    }
+
+    #[test]
+    fn test_run_pacman_command() {
+        // Test with empty tools list
+        let result = run_pacman_command("Syu", &[]).await.unwrap();
+        assert!(result.is_ok());
+
+        // Test with invalid operation flag
+        let result = run_pacman_command("invalid", &["tool1".to_string()]).await;
+        assert!(result.is_err());
+    }
+}
+ 

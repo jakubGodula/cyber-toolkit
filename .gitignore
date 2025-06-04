@@ -1,5 +1,9 @@
 # Rust build artifacts
 /target
+/scripts
+/docs
+/abi
+lib.rs:*
 
 # Backup files
 **/*.rs.bk
