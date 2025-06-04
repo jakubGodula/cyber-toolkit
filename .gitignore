@@ -1,2 +1,56 @@
+# Rust build artifacts
 /target
-Cargo.lock
+
+# Backup files
+**/*.rs.bk
+**/*.orig
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Test coverage
+lcov.info
+*.profraw
+*.profdata
+
+# Temporary files
+*.tmp
+*.bak
+
+# CI/CD artifacts
+audit-report.json
+outdated.txt
+update_summary.md
+security-report.md
+changelog.md
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Generated documentation
+/docs/book/
+
+# Binary releases
+*.tar.gz
+*.zip
+
+# Docker
+.dockerignore.backup

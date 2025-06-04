@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as prerelease'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Configure Git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Validate version format
+      id: version
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?(\+[a-zA-Z0-9]+)?$ ]]; then
+          echo "Error: Version must follow semver format (e.g., v1.0.0, v1.0.0-alpha, v1.0.0+build)"
+          exit 1
+        fi
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+    
+    - name: Update Cargo.toml version
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        # Remove 'v' prefix for Cargo.toml
+        CARGO_VERSION=${VERSION#v}
+        # Remove any pre-release or build metadata for Cargo.toml
+        CARGO_VERSION=${CARGO_VERSION%%[-+]*}
+        
+        sed -i "s/^version = \".*\"/version = \"$CARGO_VERSION\"/" Cargo.toml
+        
+        # Update Cargo.lock
+        cargo update -p cyber-toolkit
+    
+    - name: Commit version bump
+      run: |
+        git add Cargo.toml Cargo.lock
+        git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
+        git push origin ${{ github.ref_name }}
+    
+    - name: Create and push tag
+      run: |
+        git tag ${{ steps.version.outputs.version }}
+        git push origin ${{ steps.version.outputs.version }}
+
+  create-release:
+    name: Create GitHub Release
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.prepare-release.outputs.version }}
+    
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the previous tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        
+        if [ -n "$PREV_TAG" ]; then
+          echo "## Changes since $PREV_TAG" >> changelog.md
+          echo "" >> changelog.md
+          git log --oneline --no-merges $PREV_TAG..HEAD >> changelog.md
+        else
+          echo "## Initial Release" >> changelog.md
+          echo "" >> changelog.md
+          echo "This is the first release of cyber-toolkit." >> changelog.md
+        fi
+        
+        echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+        cat changelog.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+    
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ needs.prepare-release.outputs.version }}
+        release_name: Release ${{ needs.prepare-release.outputs.version }}
+        body: ${{ steps.changelog.outputs.CHANGELOG }}
+        draft: false
+        prerelease: ${{ github.event.inputs.prerelease }}
+
