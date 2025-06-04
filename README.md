@@ -10,23 +10,7 @@ pub trait ToolListProvider {
     async fn fetch_tools(&self) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 }
 ```
-Base trait for different tool list providers (GitHub, Solana).
 
-#### `GitHubToolProvider`
-```rust
-pub struct GitHubToolProvider {
-    url: String,
-}
-```
-Provider that fetches tools from a GitHub repository.
-
-#### `SolanaToolProvider`
-```rust
-pub struct SolanaToolProvider {
-    rpc_client: RpcClient,
-    program_id: Pubkey,
-}
-```
 Provider that fetches tools from a Solana program.
 
 ### Core Functions
